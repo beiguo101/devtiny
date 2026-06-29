@@ -1,6 +1,6 @@
 # DevTiny
 
-DevTiny is a tiny macOS desktop app for safe, minimal Git and Docker Compose
+DevTiny is a tiny desktop app for safe, minimal Git and Docker Compose
 operations. It is designed for people who need to maintain a local project but
 do not want to use terminal commands for routine work.
 
@@ -17,7 +17,7 @@ The app focuses on a small daily workflow:
 
 ## Current Platform Support
 
-DevTiny currently supports macOS only.
+DevTiny currently has verified macOS packaging and Linux package build support.
 
 The tested release package is for Apple Silicon macOS:
 
@@ -25,23 +25,26 @@ The tested release package is for Apple Silicon macOS:
 DevTiny_0.1.0_aarch64.dmg
 ```
 
-Intel macOS, Windows, and Linux are not supported for the current public
-release. Some code paths already include partial Windows-aware command lookup,
-but Windows packaging and runtime behavior have not been verified.
+Linux packages can be built on Linux as `.deb`, `.rpm`, and `.AppImage`.
+
+Windows is not supported for the current public release. Some code paths already
+include partial Windows-aware command lookup, but Windows packaging and runtime
+behavior have not been verified.
 
 ## Requirements
 
 To run DevTiny from source, install:
 
-- macOS 11 or later
+- macOS 11 or later, or a Linux desktop supported by Tauri 2
 - Node.js 20 or later
 - pnpm 9 or later
 - Rust stable toolchain
-- Tauri 2 build prerequisites for macOS
+- Tauri 2 build prerequisites for your OS
 - Git
-- Docker Desktop for Docker Compose features
+- Docker Desktop on macOS, or Docker Engine on Linux, for Docker Compose
+  features
 
-Docker Desktop must be running before using Docker actions.
+Docker must be running before using Docker actions.
 
 ## Install Dependencies
 
@@ -93,6 +96,28 @@ pnpm tauri build --target universal-apple-darwin
 ```
 
 DMG creation uses macOS system tooling such as `hdiutil`.
+
+## Build Linux Packages
+
+Linux packages must be built on Linux:
+
+```sh
+pnpm tauri:build:linux
+```
+
+Expected output:
+
+```text
+src-tauri/target/release/bundle/deb/*.deb
+src-tauri/target/release/bundle/rpm/*.rpm
+src-tauri/target/release/bundle/appimage/*.AppImage
+```
+
+The repository includes a GitHub Actions workflow for Linux package artifacts:
+
+```text
+.github/workflows/linux-package.yml
+```
 
 ## Safety Model
 
