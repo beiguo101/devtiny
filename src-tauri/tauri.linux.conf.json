@@ -1,0 +1,20 @@
+{
+  "bundle": {
+    "targets": ["deb", "rpm", "appimage"],
+    "category": "DeveloperTool",
+    "shortDescription": "A tiny desktop Git and Docker Compose helper",
+    "longDescription": "DevTiny is a tiny desktop app for safe, minimal Git and Docker Compose operations.",
+    "linux": {
+      "deb": {
+        "section": "devel",
+        "priority": "optional"
+      },
+      "rpm": {
+        "release": "1"
+      },
+      "appimage": {
+        "bundleMediaFramework": false
+      }
+    }
+  }
+}
