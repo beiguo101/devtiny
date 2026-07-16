@@ -2,6 +2,7 @@ use crate::core::app_error::AppResult;
 use crate::core::path_guard::{canonical_project_path, relative_to_project, resolve_existing_path};
 use crate::git::git_status::{collect_git_status_map, GitFileStatus};
 use serde::Serialize;
+use std::collections::HashSet;
 use std::fs;
 use std::path::Path;
 
@@ -47,6 +48,7 @@ pub struct DirectorySummary {
 pub fn list_project_files(project_path: String) -> AppResult<Vec<FileTreeNode>> {
     let project_path = canonical_project_path(&project_path)?;
     let status_map = collect_git_status_map(&project_path).unwrap_or_default();
+    let ignored_paths = collect_ignored_paths(&project_path);
     let mut entries_seen = 0usize;
     read_directory(
         &project_path,
@@ -54,6 +56,7 @@ pub fn list_project_files(project_path: String) -> AppResult<Vec<FileTreeNode>> 
         0,
         &mut entries_seen,
         &status_map,
+        &ignored_paths,
     )
 }
 
@@ -97,6 +100,7 @@ fn read_directory(
     depth: usize,
     entries_seen: &mut usize,
     status_map: &std::collections::HashMap<String, GitFileStatus>,
+    ignored_paths: &HashSet<String>,
 ) -> AppResult<Vec<FileTreeNode>> {
     if depth > MAX_TREE_DEPTH || *entries_seen >= MAX_TREE_ENTRIES {
         return Ok(Vec::new());
@@ -120,8 +124,18 @@ fn read_directory(
 
         *entries_seen += 1;
         let relative_path = relative_to_project(project_path, &path)?;
+        if is_git_ignored(&relative_path, ignored_paths) {
+            continue;
+        }
         let children = if is_directory {
-            read_directory(project_path, &path, depth + 1, entries_seen, status_map)?
+            read_directory(
+                project_path,
+                &path,
+                depth + 1,
+                entries_seen,
+                status_map,
+                ignored_paths,
+            )?
         } else {
             Vec::new()
         };
@@ -153,4 +167,53 @@ fn read_directory(
 
 fn should_ignore(file_name: &str) -> bool {
     IGNORED_DIRS.contains(&file_name)
+}
+
+fn collect_ignored_paths(project_path: &Path) -> HashSet<String> {
+    let output = match std::process::Command::new("git")
+        .args([
+            "ls-files",
+            "--others",
+            "--ignored",
+            "--exclude-standard",
+            "--directory",
+            "-z",
+        ])
+        .current_dir(project_path)
+        .output()
+    {
+        Ok(output) if output.status.success() => output,
+        _ => return HashSet::new(),
+    };
+    output
+        .stdout
+        .split(|byte| *byte == 0)
+        .filter(|entry| !entry.is_empty())
+        .map(|entry| {
+            String::from_utf8_lossy(entry)
+                .trim_end_matches('/')
+                .replace('\\', "/")
+        })
+        .collect()
+}
+
+fn is_git_ignored(relative_path: &str, ignored_paths: &HashSet<String>) -> bool {
+    ignored_paths.contains(relative_path)
+        || ignored_paths
+            .iter()
+            .any(|ignored| relative_path.starts_with(&format!("{ignored}/")))
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn filters_exact_ignored_paths_and_their_children() {
+        let ignored = HashSet::from(["generated".to_string(), "debug.log".to_string()]);
+        assert!(is_git_ignored("generated", &ignored));
+        assert!(is_git_ignored("generated/cache/data.bin", &ignored));
+        assert!(is_git_ignored("debug.log", &ignored));
+        assert!(!is_git_ignored("src/generated.rs", &ignored));
+    }
 }

@@ -22,9 +22,12 @@ pub enum GitFileStatus {
 #[serde(rename_all = "camelCase")]
 pub struct GitChangeFile {
     pub relative_path: String,
+    pub old_relative_path: Option<String>,
     pub status: GitFileStatus,
     pub index_status: String,
     pub worktree_status: String,
+    pub additions: Option<u32>,
+    pub deletions: Option<u32>,
 }
 
 #[derive(Debug, Serialize)]
@@ -36,6 +39,10 @@ pub struct ProjectOverview {
     pub has_compose_file: bool,
     pub compose_file_path: Option<String>,
     pub running: bool,
+    pub branch: Option<String>,
+    pub last_commit: Option<String>,
+    pub last_commit_subject: Option<String>,
+    pub last_commit_at: Option<String>,
 }
 
 #[tauri::command]
@@ -43,17 +50,39 @@ pub async fn get_project_overview(project_path: String) -> AppResult<ProjectOver
     let project_path = canonical_project_path(&project_path)?;
     let git_available = command_available("git");
     let is_git_repository = git_available && is_git_repository(&project_path);
-    let compose_file = crate::runtime::compose_actions::find_compose_file(&project_path);
-    let running = crate::runtime::compose_actions::is_compose_running(&project_path).await;
+    let branch = git_text(&project_path, &["branch", "--show-current"]);
+    let last_commit = git_text(&project_path, &["rev-parse", "--short", "HEAD"]);
+    let last_commit_subject = git_text(&project_path, &["log", "-1", "--pretty=%s"]);
+    let last_commit_at = git_text(&project_path, &["log", "-1", "--pretty=%cI"]);
 
     Ok(ProjectOverview {
         project_path: project_path.to_string_lossy().to_string(),
         git_available,
         is_git_repository,
-        has_compose_file: compose_file.is_some(),
-        compose_file_path: compose_file.map(|path| path.to_string_lossy().to_string()),
-        running,
+        has_compose_file: false,
+        compose_file_path: None,
+        running: false,
+        branch,
+        last_commit,
+        last_commit_subject,
+        last_commit_at,
     })
+}
+
+fn git_text(project_path: &Path, args: &[&str]) -> Option<String> {
+    if !is_git_repository(project_path) {
+        return None;
+    }
+    let output = std::process::Command::new("git")
+        .args(args)
+        .current_dir(project_path)
+        .output()
+        .ok()?;
+    if !output.status.success() {
+        return None;
+    }
+    let value = String::from_utf8_lossy(&output.stdout).trim().to_string();
+    (!value.is_empty()).then_some(value)
 }
 
 #[tauri::command]
@@ -101,31 +130,71 @@ pub async fn list_git_changes_for_project(project_path: &Path) -> AppResult<Vec<
     )
     .await?;
 
-    Ok(parse_status_output(output.stdout.as_bytes()))
+    let mut changes = parse_status_output(output.stdout.as_bytes());
+    enrich_numstat(project_path, &mut changes);
+    Ok(changes)
+}
+
+fn enrich_numstat(project_path: &Path, changes: &mut [GitChangeFile]) {
+    let output = match std::process::Command::new("git")
+        .args(["diff", "--numstat", "HEAD", "--"])
+        .current_dir(project_path)
+        .output()
+    {
+        Ok(output) if output.status.success() => output,
+        _ => return,
+    };
+    let text = String::from_utf8_lossy(&output.stdout);
+    for line in text.lines() {
+        let mut fields = line.splitn(3, '\t');
+        let additions = fields.next().and_then(|value| value.parse::<u32>().ok());
+        let deletions = fields.next().and_then(|value| value.parse::<u32>().ok());
+        let path = fields.next().unwrap_or_default();
+        if let Some(change) = changes
+            .iter_mut()
+            .find(|change| change.relative_path == path)
+        {
+            change.additions = additions;
+            change.deletions = deletions;
+        }
+    }
 }
 
 pub fn parse_status_output(bytes: &[u8]) -> Vec<GitChangeFile> {
     let mut changes = Vec::new();
-    let entries = bytes
+    let entries: Vec<_> = bytes
         .split(|byte| *byte == 0)
-        .filter(|entry| !entry.is_empty());
-    for entry in entries {
+        .filter(|entry| !entry.is_empty())
+        .collect();
+    let mut cursor = 0usize;
+    while cursor < entries.len() {
+        let entry = entries[cursor];
         if entry.len() < 4 {
+            cursor += 1;
             continue;
         }
 
         let index = entry[0] as char;
         let worktree = entry[1] as char;
-        let path = String::from_utf8_lossy(&entry[3..]).to_string();
-        let relative_path = path.split(" -> ").last().unwrap_or(&path).to_string();
+        let relative_path = String::from_utf8_lossy(&entry[3..]).to_string();
         let status = classify_status(index, worktree);
+        let old_relative_path = if index == 'R' && cursor + 1 < entries.len() {
+            cursor += 1;
+            Some(String::from_utf8_lossy(entries[cursor]).to_string())
+        } else {
+            None
+        };
 
         changes.push(GitChangeFile {
             relative_path,
+            old_relative_path,
             status,
             index_status: index.to_string(),
             worktree_status: worktree.to_string(),
+            additions: None,
+            deletions: None,
         });
+        cursor += 1;
     }
 
     changes
@@ -168,5 +237,15 @@ mod tests {
         assert_eq!(changes[1].status, GitFileStatus::Untracked);
         assert_eq!(changes[2].status, GitFileStatus::Staged);
         assert_eq!(changes[3].status, GitFileStatus::Deleted);
+    }
+
+    #[test]
+    fn parses_rename_paths_from_zero_format() {
+        let changes = parse_status_output(b"R  new-name.txt\0old-name.txt\0");
+        assert_eq!(changes[0].relative_path, "new-name.txt");
+        assert_eq!(
+            changes[0].old_relative_path.as_deref(),
+            Some("old-name.txt")
+        );
     }
 }

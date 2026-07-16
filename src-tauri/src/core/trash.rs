@@ -21,9 +21,41 @@ pub fn move_path_to_trash(path: &Path) -> AppResult<()> {
     }
 
     #[cfg(not(target_os = "macos"))]
+    #[cfg(target_os = "linux")]
     {
+        for (program, args) in [
+            (
+                "gio",
+                vec!["trash".to_string(), path.to_string_lossy().to_string()],
+            ),
+            ("trash-put", vec![path.to_string_lossy().to_string()]),
+        ] {
+            if let Ok(output) = Command::new(program).args(args).output() {
+                if output.status.success() {
+                    return Ok(());
+                }
+            }
+        }
         Err(AppError::unavailable(
-            "Moving files to the system Trash is not supported on this platform yet.",
+            "No supported system Trash command was found.",
+        ))
+    }
+
+    #[cfg(target_os = "windows")]
+    {
+        let escaped = path.to_string_lossy().replace('\'', "''");
+        let script = format!(
+            "$shell = New-Object -ComObject Shell.Application; $shell.Namespace(10).MoveHere('{}')",
+            escaped
+        );
+        let output = Command::new("powershell")
+            .args(["-NoProfile", "-NonInteractive", "-Command", &script])
+            .output()?;
+        if output.status.success() {
+            return Ok(());
+        }
+        Err(AppError::command_failed(
+            "Failed to move file to Recycle Bin.",
         ))
     }
 }

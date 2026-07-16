@@ -5,6 +5,9 @@ export interface GitChangeFile {
   status: GitFileStatus
   indexStatus: string
   worktreeStatus: string
+  oldRelativePath?: string
+  additions?: number
+  deletions?: number
 }
 
 export interface FileDiff {
@@ -12,9 +15,35 @@ export interface FileDiff {
   diff: string
 }
 
+export interface IgnoredRule {
+  rule: string
+  displayName: string
+  mode: 'file' | 'extension'
+}
+
 export interface FileHistoryEntry {
   commit: string
   shortCommit: string
   date: string
   subject: string
+}
+
+export interface SavePointPage {
+  entries: FileHistoryEntry[]
+  hasMore: boolean
+}
+
+export interface SavePointFile {
+  relativePath: string
+  oldRelativePath?: string
+  status: GitFileStatus
+}
+
+export interface FileRevisionContent {
+  relativePath: string
+  commit: string
+  content: string
+  diff: string
+  isBinary: boolean
+  size: number
 }

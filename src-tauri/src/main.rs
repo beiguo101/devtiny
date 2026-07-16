@@ -14,7 +14,11 @@ use filesystem::manage_file::{create_project_file, delete_project_file, write_pr
 use filesystem::read_file::read_project_file;
 use git::git_actions::{execute_workbench_action, preview_workbench_action};
 use git::git_diff::get_file_diff;
-use git::git_file_history::{list_file_history, restore_file_revision, save_file_revision_as};
+use git::git_file_history::{
+    get_save_point_file_diff, list_file_history, list_save_point_files, list_save_points,
+    read_file_revision, restore_file_revision, save_file_revision_as,
+};
+use git::git_ignore::{add_ignored_rule, list_ignored_rules, remove_ignored_rule};
 use git::git_status::{get_project_overview, list_git_changes};
 use history::command_history::{clear_command_history, list_command_history, HistoryStore};
 use state::AppState;
@@ -44,8 +48,15 @@ fn main() {
             write_project_file,
             delete_project_file,
             list_git_changes,
+            list_ignored_rules,
+            add_ignored_rule,
+            remove_ignored_rule,
             get_file_diff,
             list_file_history,
+            list_save_points,
+            list_save_point_files,
+            get_save_point_file_diff,
+            read_file_revision,
             save_file_revision_as,
             restore_file_revision,
             preview_workbench_action,

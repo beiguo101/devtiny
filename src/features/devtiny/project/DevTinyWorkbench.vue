@@ -1,609 +1,247 @@
 <template>
-  <div class="workbench-shell">
-    <aside class="workbench-sidebar">
-      <div class="brand-row">
-        <strong>{{ t('appName') }}</strong>
-        <select :value="locale" :aria-label="t('language')" @change="changeLocale">
-          <option value="zh-CN">中文</option>
-          <option value="en-US">English</option>
-        </select>
-      </div>
-
-      <div class="project-picker-row">
-        <button class="primary-button full-width" type="button" @click="chooseProject">
-          {{ t('chooseProject') }}
-        </button>
-        <button
-          class="secondary-button project-refresh-button"
-          type="button"
-          :disabled="!projectPath"
-          @click="refreshAll"
-        >
-          <IconRefresh />
-          {{ t('refresh') }}
-        </button>
-      </div>
-
-      <button
-        class="secondary-button sidebar-runtime-button"
-        type="button"
-        :class="{ active: mainView === 'runtime' }"
-        :disabled="!projectPath"
-        @click="mainView = 'runtime'"
-      >
-        <IconPlayerPlay />
-        {{ t('runtime') }}
-      </button>
-
-      <div class="sidebar-file-actions">
-        <button class="secondary-button compact-button" type="button" :disabled="!projectPath" @click="createFile">
-          {{ t('newFile') }}
-        </button>
-        <button
-          class="secondary-button compact-button"
-          type="button"
-          :disabled="!canDeleteSelectedFile"
-          @click="deleteSelectedFile"
-        >
-          {{ t('deleteFile') }}
-        </button>
-      </div>
-
-      <div class="segmented">
-        <button :class="{ active: leftView === 'files' }" type="button" @click="leftView = 'files'">
-          {{ t('fileView') }}
-        </button>
-        <button :class="{ active: leftView === 'changes' }" type="button" @click="leftView = 'changes'">
-          {{ t('changesView') }}
-        </button>
-      </div>
-
-      <FileTreeView
-        v-if="leftView === 'files'"
-        :nodes="fileTree"
-        :selected-path="selectedPath"
-        @select="selectNode"
-      />
-      <ChangesView
-        v-else
-        :changes="changes"
-        :selected-paths="selectedChangePaths"
-        @select="selectChange"
-        @selection-change="selectedChangeFiles = $event"
-      />
-    </aside>
-
-    <main class="workbench-main">
-      <section v-if="projectPath && overview && !overview.isGitRepository && showNonGitPrompt" class="non-git-banner">
-        <div>
-          <strong>{{ t('nonGitTitle') }}</strong>
-          <p>{{ t('nonGitBody') }}</p>
+  <div class="dt-app-shell">
+    <template v-if="!state.projectOpen">
+      <main class="dt-project-welcome">
+        <div class="dt-welcome-brand"><span>DT</span><strong>DevTiny</strong></div>
+        <div class="dt-welcome-copy">
+          <span class="dt-eyebrow">本地项目事实视图</span>
+          <h1>看见当前，理解变化，<br />建立新的稳定点。</h1>
+          <p>从文件出发，清楚了解上一次保存之后发生了什么。</p>
         </div>
-        <div class="button-row">
-          <button class="primary-button" type="button" @click="prepareAction('git.init')">{{ t('initGit') }}</button>
-          <button class="secondary-button" type="button" @click="showNonGitPrompt = false">{{ t('skipGit') }}</button>
-        </div>
-      </section>
+        <button class="dt-open-project" type="button" :class="{ 'is-unavailable': !isTauriRuntime }" @click="chooseRealProject">
+          <span><IconFolderOpen /></span>
+          <span><strong>选择本地项目</strong><small>{{ isTauriRuntime ? '读取真实文件与 Git 状态' : '需要在 Tauri 桌面窗口中运行' }}</small></span>
+          <IconArrowRight />
+        </button>
+        <button v-if="isDev" class="dt-button dt-button-secondary dt-mock-entry" type="button" @click="openProject">打开模拟项目进行界面回归</button>
+        <p class="dt-mock-note"><IconInfoCircle /> {{ runtimeHint }}</p>
+        <p v-if="state.error" class="dt-welcome-error">{{ state.error }}</p>
+      </main>
+    </template>
 
-      <div v-if="error" class="error-box">{{ error }}</div>
-      <RuntimePanel
-        v-if="mainView === 'runtime' && projectPath"
-        class="main-runtime-panel"
-        :project-path="projectPath"
-        :is-git-repository="overview?.isGitRepository ?? false"
-        :has-compose-file="overview?.hasComposeFile ?? false"
-        :compose-file-path="overview?.composeFilePath"
-        :running="overview?.running ?? false"
-        :task="runtimeTask"
-        :mirror-message="mirrorMessage"
-        @run="prepareAction"
-        @first-run="startFirstRun"
-        @configure-mirrors="configureMirrors"
-        @cancel-task="cancelFirstRun"
-      />
-
-      <template v-else>
-        <ContentPanel
-          :mode="contentMode"
-          :directory-summary="directorySummary"
-          :file-content="fileContent"
-          :diff="diff"
-          :status="selectedStatus"
-          :project-path="projectPath"
-          :relative-path="selectedPath"
-          :is-git-repository="overview?.isGitRepository ?? false"
-          @saved="handleFileSaved"
-        />
-
-        <section v-if="projectPath && overview?.isGitRepository" class="file-actions-panel">
-          <div class="action-row">
-            <input v-model="commitMessage" type="text" :placeholder="t('commitMessage')" />
-            <button
-              class="secondary-button"
-              type="button"
-              :disabled="!selectedChangeFiles.length"
-              @click="commitFiles(selectedChangeFiles)"
-            >
-              {{ t('commitSelected') }}
-            </button>
-            <button class="secondary-button" type="button" :disabled="!changes.length" @click="commitAll">
-              {{ t('commitAll') }}
-            </button>
-            <button
-              class="secondary-button"
-              type="button"
-              :disabled="!selectedChangeFiles.length"
-              @click="ignoreFiles(selectedChangeFiles)"
-            >
-              {{ t('ignoreSelected') }}
-            </button>
-            <button
-              class="danger-button"
-              type="button"
-              :disabled="!selectedChangeFiles.length"
-              @click="restoreFiles(selectedChangeFiles)"
-            >
-              {{ t('restoreSelected') }}
-            </button>
-          </div>
-          <p v-if="actionError" class="action-error">{{ actionError }}</p>
-
-          <div class="staged-area">
-            <div class="selected-files-head">
-              <h2>{{ t('stagedFiles') }}</h2>
-              <span class="muted small">{{ stagedFiles.length }}</span>
-            </div>
-            <div v-if="stagedFiles.length" class="staged-file-list">
-              <span v-for="file in stagedFiles" :key="file.relativePath" class="staged-file-chip">
-                <span>{{ file.relativePath }}</span>
-                <button type="button" :aria-label="t('unstageFile')" @click="unstageFile(file)">x</button>
-              </span>
-            </div>
-            <p v-else class="muted small">{{ t('noStagedFiles') }}</p>
-          </div>
-        </section>
-
-        <FileHistoryPanel
-          :mode="contentMode"
-          :status="selectedStatus"
-          :project-path="projectPath"
-          :relative-path="selectedPath"
-          :is-git-repository="overview?.isGitRepository ?? false"
-          @restored="refreshAll"
-        />
-      </template>
-    </main>
-
-    <CommandConfirmDialog
-      :preview="preview"
-      :busy="busy"
-      :error="dialogError"
-      @cancel="preview = null"
-      @confirm="executePreview"
+    <ChangeFilesFocus
+      v-else
+      :project-name="state.project.name"
+      :project-path="state.project.path"
+      :files="state.files"
+      :tree="fileTree"
+      :changed-files="changedFiles"
+      :ignored-files="state.ignoredFiles"
+      :selected-count="selectedFiles.length"
+      :is-git-repository="state.isGitRepository"
+      :has-first-commit="state.hasFirstCommit"
+      :real-mode="state.realMode"
+      :loading="state.loading"
+      :saving="state.saving"
+      :commit-message="state.commitMessage"
+      @select-file="selectFile"
+      @set-selected="setSelected"
+      @request-undo="requestUndo"
+      @ignore-with-rule="ignoreFile"
+      @restore-ignored="restoreIgnored"
+      @stage-all="selectAll"
+      @unstage-all="clearSelection"
+      @switch-project="chooseRealProject"
+      @refresh="refreshRealProject"
+      @restored="handleHistoryRestored"
+      @update-commit-message="state.commitMessage = $event"
+      @create-save-point="createSavePoint"
     />
 
-    <div v-if="outputOpen && lastOutput" class="dialog-backdrop">
-      <div class="dialog output-dialog">
-        <div class="section-header">
-          <h2>{{ t('output') }}</h2>
-          <button class="secondary-button compact-button" type="button" @click="outputOpen = false">
-            {{ t('close') }}
-          </button>
-        </div>
-        <pre>{{ lastOutput }}</pre>
-      </div>
+    <div v-if="state.projectOpen && state.error" class="dt-global-message focus-global-message is-error"><IconAlertTriangle /><span><strong>操作未完成</strong>{{ state.error }}</span><button type="button" @click="state.error = ''">关闭</button></div>
+    <div v-if="state.projectOpen && state.notice" class="dt-global-message focus-global-message is-success"><IconCircleCheck /><span><strong>已完成</strong>{{ state.notice }}</span><button type="button" @click="state.notice = ''">关闭</button></div>
+
+    <label v-if="state.projectOpen && isDev" class="dt-scenario-switch">
+      <span>DEV · Mock 场景</span>
+      <select :value="state.scenario" @change="loadScenario(($event.target as HTMLSelectElement).value as ScenarioId)">
+        <option v-for="scenario in scenarioOptions" :key="scenario.id" :value="scenario.id">{{ scenario.label }}</option>
+      </select>
+    </label>
+
+    <div v-if="state.projectOpen && state.undoDialogOpen" class="dt-result-overlay" role="dialog" aria-modal="true" aria-labelledby="undo-title-focus">
+      <article class="dt-confirm-dialog">
+        <span class="dt-warning-icon"><IconAlertTriangle /></span>
+        <div><span class="dt-eyebrow">{{ undoIsAdded ? '可从系统回收站找回' : '这一步不能恢复' }}</span><h2 id="undo-title-focus">{{ undoIsAdded ? `删除 ${undoFileName}？` : `撤销 ${undoFileName} 的修改？` }}</h2></div>
+        <p>{{ undoIsAdded ? '这是一个尚未纳入项目的新文件。确认后会将文件移到系统回收站，而不是永久删除。' : '文件会回到最近一次保存时的样子，本次尚未保存的修改会消失。' }}</p>
+        <div class="dt-impact-row"><span>将受影响</span><strong>{{ state.undoTargetPath }}</strong></div>
+        <div class="dt-dialog-actions"><button class="dt-button dt-button-secondary" type="button" @click="cancelUndo">{{ undoIsAdded ? '保留文件' : '保留修改' }}</button><button class="dt-button dt-button-danger" type="button" @click="confirmUndo">{{ undoIsAdded ? '移到回收站' : '确认撤销' }}</button></div>
+      </article>
     </div>
 
-    <div v-if="newFileDialogOpen" class="dialog-backdrop">
-      <form class="dialog new-file-dialog" @submit.prevent="submitCreateFile">
-        <h2>{{ t('newFile') }}</h2>
-        <p class="muted small">{{ t('newFilePrompt') }}</p>
-        <input v-model="newFilePath" type="text" autofocus placeholder="app/config.py" />
-        <p v-if="newFileError" class="error-box">{{ newFileError }}</p>
-        <div class="dialog-actions">
-          <button class="secondary-button" type="button" @click="newFileDialogOpen = false">
-            {{ t('cancel') }}
-          </button>
-          <button class="primary-button" type="submit">
-            {{ t('newFile') }}
-          </button>
+    <template v-if="false">
+      <header class="dt-project-header">
+        <div class="dt-project-identity">
+          <span class="dt-app-mark">DT</span>
+          <div><strong>{{ state.project.name }}</strong><span>{{ state.project.path }}</span></div>
         </div>
-      </form>
-    </div>
+        <div class="dt-project-facts">
+          <div><IconGitBranch /><span>当前分支</span><strong>{{ state.isGitRepository ? state.project.branch : '非 Git 目录' }}</strong></div>
+          <div><IconGitCommit /><span>上次保存</span><strong>{{ state.hasFirstCommit ? state.project.lastCommit : '尚无提交' }}</strong></div>
+          <div><IconFileDiff /><span>当前变化</span><strong>{{ changedFiles.length }} 个文件</strong></div>
+          <div><IconChecklist /><span>准备保存</span><strong>{{ selectedFiles.length }} 个文件</strong></div>
+        </div>
+        <div class="dt-header-actions"><button v-if="state.realMode" class="dt-project-switch" type="button" @click="refreshRealProject"><IconRefresh /> 刷新</button><button class="dt-project-switch" type="button" @click="chooseRealProject"><IconFolderOpen /> 切换项目</button></div>
+      </header>
+
+      <div class="dt-workspace">
+        <nav class="dt-navigation" aria-label="一级导航">
+          <div class="dt-nav-brand"><strong>DevTiny</strong><span>V0.1 prototype</span></div>
+          <button type="button" :class="{ active: state.activeView === 'overview' }" @click="state.activeView = 'overview'"><IconLayoutDashboard /><span><strong>Overview</strong><small>项目当前状态</small></span></button>
+          <button type="button" :class="{ active: state.activeView === 'changes' }" @click="state.activeView = 'changes'"><IconGitCompare /><span><strong>Changes</strong><small>理解与组织变化</small></span><em v-if="changedFiles.length">{{ changedFiles.length }}</em></button>
+          <button type="button" :class="{ active: state.activeView === 'files' }" @click="state.activeView = 'files'"><IconFiles /><span><strong>Files</strong><small>当前文件事实</small></span></button>
+          <div class="dt-nav-status"><span :class="{ clean: !changedFiles.length }"></span><div><strong>{{ changedFiles.length ? '工作区有变化' : '工作区干净' }}</strong><small>{{ state.isGitRepository ? state.project.branch : '未开启版本管理' }}</small></div></div>
+        </nav>
+
+        <div class="dt-main-area">
+          <div v-if="state.loading" class="dt-loading-state"><span class="dt-loading-mark"></span><strong>正在读取项目…</strong><p>正在整理文件和 Git 变化事实。</p></div>
+          <template v-else>
+            <div v-if="state.error" class="dt-global-message is-error"><IconAlertTriangle /><span><strong>操作未完成</strong>{{ state.error }}</span><button type="button" @click="state.error = ''">关闭</button></div>
+            <div v-if="state.notice" class="dt-global-message is-success"><IconCircleCheck /><span><strong>状态已更新</strong>{{ state.notice }}</span><button type="button" @click="state.notice = ''">关闭</button></div>
+
+            <OverviewView
+              v-if="state.activeView === 'overview'"
+              :project="state.project"
+              :files="state.files"
+              :changed-files="changedFiles"
+              :selected-count="selectedFiles.length"
+              :unselected-count="unselectedFiles.length"
+              :status-counts="statusCounts"
+              :is-git-repository="state.isGitRepository"
+              :has-first-commit="state.hasFirstCommit"
+              :initializing-git="state.initializingGit"
+              @open-changes="state.activeView = 'changes'"
+              @show-diff="showDiff"
+              @init-git="initializeGit"
+            />
+            <ChangesExperience
+              v-else-if="state.activeView === 'changes'"
+              :changed-files="changedFiles"
+              :selected-files="selectedFiles"
+              :unselected-files="unselectedFiles"
+              :selected-file="selectedFile"
+              :selected-part="state.selectedPart"
+              :additions="additions"
+              :deletions="deletions"
+              :commit-message="state.commitMessage"
+              :can-save="canSave"
+              :saving="state.saving"
+              :save-result="state.saveResult"
+              :is-git-repository="state.isGitRepository"
+              :has-first-commit="state.hasFirstCommit"
+              :project-path="state.project.path"
+              :real-mode="state.realMode"
+              @select-file="selectFile"
+              @set-selected="setSelected"
+              @select-all="selectAll"
+              @clear-selection="clearSelection"
+              @request-undo="requestUndo"
+              @update-commit-message="state.commitMessage = $event"
+              @create-save-point="createSavePoint"
+              @go-overview="state.saveResult = null; state.activeView = 'overview'"
+              @dismiss-result="state.saveResult = null"
+              @restored="handleHistoryRestored"
+            />
+            <FilesExperience
+              v-else
+              :tree="fileTree"
+              :files="state.files"
+              :selected-file="selectedFile"
+              :project-path="state.project.path"
+              :is-git-repository="state.isGitRepository"
+              :real-mode="state.realMode"
+              @select-file="selectFile"
+              @show-diff="showDiff"
+              @restored="handleHistoryRestored"
+            />
+          </template>
+        </div>
+      </div>
+
+      <label v-if="isDev" class="dt-scenario-switch">
+        <span>DEV · Mock 场景</span>
+        <select :value="state.scenario" @change="loadScenario(($event.target as HTMLSelectElement).value as ScenarioId)">
+          <option v-for="scenario in scenarioOptions" :key="scenario.id" :value="scenario.id">{{ scenario.label }}</option>
+        </select>
+      </label>
+
+      <div v-if="state.undoDialogOpen" class="dt-result-overlay" role="dialog" aria-modal="true" aria-labelledby="undo-title">
+        <article class="dt-confirm-dialog">
+          <span class="dt-warning-icon"><IconAlertTriangle /></span>
+          <div><span class="dt-eyebrow">不可恢复的操作</span><h2 id="undo-title">撤销 {{ undoFileName }} 的未保存修改？</h2></div>
+          <p>文件将恢复到最近一次提交状态。该修改在 Git 中尚未保存，撤销后无法通过 DevTiny 恢复。</p>
+          <div class="dt-impact-row"><span>将受影响</span><strong>{{ state.undoTargetPath }}</strong></div>
+          <div class="dt-dialog-actions"><button class="dt-button dt-button-secondary" type="button" @click="cancelUndo">保留修改</button><button class="dt-button dt-button-danger" type="button" @click="confirmUndo">确认撤销修改</button></div>
+        </article>
+      </div>
+    </template>
   </div>
 </template>
 
 <script setup lang="ts">
-import { confirm, open } from '@tauri-apps/plugin-dialog'
-import { computed, onBeforeUnmount, onMounted, ref } from 'vue'
-import { IconPlayerPlay, IconRefresh } from '@tabler/icons-vue'
-import { locale, setLocale, t, type Locale } from '../../../app/i18n'
+import { computed, onBeforeUnmount, watch } from 'vue'
+import { open } from '@tauri-apps/plugin-dialog'
 import {
-  cancelRuntimeTask,
-  configureProjectMirrors,
-  executeWorkbenchAction,
-  getRuntimeTask,
-  previewWorkbenchAction,
-  startRuntimeFirstRun
-} from '../../../core/commands/api'
-import type {
-  CommandPreview,
-  GitFileSelection,
-  GitFileStatus,
-  RuntimeTask,
-  WorkbenchAction
-} from '../../../core/commands/types'
-import {
-  createProjectFile,
-  deleteProjectFile,
-  getDirectorySummary,
-  listProjectFiles,
-  readProjectFile
-} from '../../../core/filesystem/api'
-import type { DirectorySummary, FileContent, FileTreeNode } from '../../../core/filesystem/types'
-import { getProjectOverview } from '../../../core/project/api'
-import type { ProjectOverview } from '../../../core/project/types'
-import { getFileDiff, listGitChanges } from '../changes/api'
-import type { GitChangeFile } from '../changes/types'
-import ChangesView from '../changes/ChangesView.vue'
-import ContentPanel from '../files/ContentPanel.vue'
-import FileTreeView from '../files/FileTreeView.vue'
-import FileHistoryPanel from '../history/FileHistoryPanel.vue'
-import RuntimePanel from '../runtime/RuntimePanel.vue'
-import CommandConfirmDialog from './CommandConfirmDialog.vue'
+  IconAlertTriangle, IconArrowRight, IconChecklist, IconCircleCheck, IconFileDiff,
+  IconFiles, IconFolderOpen, IconGitBranch, IconGitCommit, IconGitCompare,
+  IconInfoCircle, IconLayoutDashboard, IconRefresh
+} from '@tabler/icons-vue'
+import ChangesExperience from '../changes/ChangesExperience.vue'
+import ChangeFilesFocus from '../changes/ChangeFilesFocus.vue'
+import FilesExperience from '../files/FilesExperience.vue'
+import { scenarioOptions, useMockProject } from '../mock/projectMock'
+import type { ScenarioId } from '../mock/types'
+import OverviewView from '../overview/OverviewView.vue'
 
-const projectPath = ref(localStorage.getItem('devtiny.projectPath') || '')
-const overview = ref<ProjectOverview | null>(null)
-const fileTree = ref<FileTreeNode[]>([])
-const changes = ref<GitChangeFile[]>([])
-const selectedChangeFiles = ref<GitFileSelection[]>([])
-const leftView = ref<'files' | 'changes'>('files')
-const selectedPath = ref('')
-const selectedNodeKind = ref<'directory' | 'file' | null>(null)
-const selectedStatus = ref<GitFileStatus | null>(null)
-const contentMode = ref<'empty' | 'directory' | 'content' | 'diff'>('empty')
-const directorySummary = ref<DirectorySummary | null>(null)
-const fileContent = ref<FileContent | null>(null)
-const diff = ref('')
-const error = ref('')
-const actionError = ref('')
-const dialogError = ref('')
-const busy = ref(false)
-const preview = ref<CommandPreview | null>(null)
-const commitMessage = ref('')
-const lastOutput = ref('')
-const outputOpen = ref(false)
-const runtimeTask = ref<RuntimeTask | null>(null)
-const runtimeTaskTimer = ref<number | null>(null)
-const mirrorMessage = ref('')
-const newFileDialogOpen = ref(false)
-const newFilePath = ref('')
-const newFileError = ref('')
-const showNonGitPrompt = ref(true)
-const mainView = ref<'content' | 'runtime'>('content')
+const {
+  state, changedFiles, selectedFiles, unselectedFiles, selectedFile, additions, deletions,
+  statusCounts, fileTree, canSave, openProject, loadRealProject, refreshRealProject, initializeGit, selectFile, showDiff, setSelected,
+  selectAll, clearSelection, ignoreFile, restoreIgnored, createSavePoint, requestUndo, cancelUndo, confirmUndo, loadScenario
+} = useMockProject()
 
-const gitEnabled = computed(() => Boolean(overview.value?.isGitRepository))
-const stagedFiles = computed<GitFileSelection[]>(() =>
-  selectedChangeFiles.value
-)
-const selectedChangePaths = computed(() => selectedChangeFiles.value.map((file) => file.relativePath))
-const canDeleteSelectedFile = computed(() => Boolean(projectPath.value && selectedPath.value && contentMode.value === 'content'))
+const isDev = Boolean((import.meta as ImportMeta & { env?: { DEV?: boolean } }).env?.DEV)
+const isTauriRuntime = Boolean((window as Window & { __TAURI_INTERNALS__?: unknown }).__TAURI_INTERNALS__)
+const undoFileName = computed(() => state.undoTargetPath.split('/').pop() || state.undoTargetPath)
+const undoIsAdded = computed(() => state.files.find((file) => file.path === state.undoTargetPath)?.status === 'added')
+const runtimeHint = computed(() => isTauriRuntime
+  ? 'Git 写操作会显示明确影响范围；撤销修改不可恢复。'
+  : '当前是浏览器预览，只能体验 mock。请运行 pnpm tauri:dev 使用真实本地项目。')
+let operationFeedbackTimer: number | null = null
 
-onMounted(() => {
-  if (projectPath.value) {
-    void refreshAll()
-  }
+watch(() => [state.notice, state.error] as const, ([notice, error]) => {
+  if (operationFeedbackTimer !== null) window.clearTimeout(operationFeedbackTimer)
+  if (!notice && !error) return
+  operationFeedbackTimer = window.setTimeout(() => {
+    state.notice = ''
+    state.error = ''
+    operationFeedbackTimer = null
+  }, 3000)
 })
 
 onBeforeUnmount(() => {
-  stopRuntimeTaskPolling()
+  if (operationFeedbackTimer !== null) window.clearTimeout(operationFeedbackTimer)
 })
 
-async function chooseProject() {
-  const selected = await open({
-    directory: true,
-    multiple: false,
-    title: t('chooseProject')
-  })
-  if (typeof selected === 'string') {
-    projectPath.value = selected
-    localStorage.setItem('devtiny.projectPath', selected)
-    showNonGitPrompt.value = true
-    mainView.value = 'runtime'
-    await refreshAll()
-  }
-}
-
-async function refreshAll() {
-  if (!projectPath.value) return
-  error.value = ''
-  try {
-    overview.value = await getProjectOverview(projectPath.value)
-    fileTree.value = await listProjectFiles(projectPath.value)
-    changes.value = overview.value.isGitRepository ? await listGitChanges(projectPath.value) : []
-    selectedChangeFiles.value = selectedChangeFiles.value.filter((file) =>
-      changes.value.some((change) => change.relativePath === file.relativePath)
-    )
-  } catch (err) {
-    error.value = formatError(err)
-  }
-}
-
-async function selectNode(node: FileTreeNode) {
-  mainView.value = 'content'
-  selectedPath.value = node.relativePath
-  selectedNodeKind.value = node.kind
-  selectedStatus.value = node.status
-  directorySummary.value = null
-  fileContent.value = null
-  diff.value = ''
-  error.value = ''
-
-  try {
-    if (node.kind === 'directory') {
-      directorySummary.value = await getDirectorySummary(projectPath.value, node.relativePath)
-      contentMode.value = 'directory'
-      return
-    }
-
-    fileContent.value = await readProjectFile(projectPath.value, node.relativePath)
-    contentMode.value = 'content'
-  } catch (err) {
-    error.value = formatError(err)
-  }
-}
-
-async function selectChange(change: GitChangeFile) {
-  mainView.value = 'content'
-  selectedPath.value = change.relativePath
-  selectedNodeKind.value = 'file'
-  selectedStatus.value = change.status
-  directorySummary.value = null
-  fileContent.value = null
-  diff.value = ''
-  error.value = ''
-
-  try {
-    if (change.status === 'added' || change.status === 'untracked') {
-      fileContent.value = await readProjectFile(projectPath.value, change.relativePath)
-      contentMode.value = 'content'
-      return
-    }
-
-    const result = await getFileDiff(projectPath.value, change.relativePath, change.status)
-    diff.value = result.diff
-    contentMode.value = 'diff'
-  } catch (err) {
-    error.value = formatError(err)
-  }
-}
-
-async function createFile() {
-  if (!projectPath.value) return
-  newFilePath.value = defaultNewFilePath()
-  newFileError.value = ''
-  newFileDialogOpen.value = true
-}
-
-function defaultNewFilePath() {
-  if (!selectedPath.value) return ''
-  if (selectedNodeKind.value === 'directory') {
-    return selectedPath.value ? `${selectedPath.value.replace(/\/$/, '')}/` : ''
-  }
-  return selectedPath.value.includes('/') ? `${selectedPath.value.split('/').slice(0, -1).join('/')}/` : ''
-}
-
-async function submitCreateFile() {
-  if (!projectPath.value) return
-  const relativePath = newFilePath.value.trim()
-  if (!relativePath) {
-    newFileError.value = t('newFilePrompt')
+async function chooseRealProject() {
+  if (!isTauriRuntime) {
+    state.error = '当前是浏览器预览，无法访问本地文件系统。请停止 pnpm dev，改用 pnpm tauri:dev 启动桌面应用；也可以点击下方“打开模拟项目”继续体验界面。'
     return
   }
-
-  error.value = ''
-  newFileError.value = ''
   try {
-    const result = await createProjectFile(projectPath.value, relativePath, '')
-    newFileDialogOpen.value = false
-    await refreshAll()
-    await selectNode({
-      name: result.relativePath.split('/').filter(Boolean).pop() || result.relativePath,
-      relativePath: result.relativePath,
-      kind: 'file',
-      status: 'untracked',
-      children: []
-    })
-  } catch (err) {
-    newFileError.value = formatError(err)
+    const selected = await open({ directory: true, multiple: false, title: '选择本地项目' })
+    if (typeof selected === 'string') await loadRealProject(selected)
+  } catch (error) {
+    state.error = `无法打开目录选择器：${formatRuntimeError(error)}`
   }
 }
 
-async function deleteSelectedFile() {
-  if (!projectPath.value || !selectedPath.value || contentMode.value !== 'content') return
-  const confirmed = await confirm(`${t('deleteFileConfirm')}\n\n${selectedPath.value}`, {
-    title: t('deleteFile'),
-    kind: 'warning'
-  })
-  if (!confirmed) return
-
-  error.value = ''
-  try {
-    await deleteProjectFile(projectPath.value, selectedPath.value)
-    selectedPath.value = ''
-    selectedNodeKind.value = null
-    selectedStatus.value = null
-    fileContent.value = null
-    diff.value = ''
-    contentMode.value = 'empty'
-    await refreshAll()
-  } catch (err) {
-    error.value = formatError(err)
-  }
+async function handleHistoryRestored() {
+  await refreshRealProject()
+  state.notice = '历史版本已恢复，并作为新的未提交变化保留。'
 }
 
-async function handleFileSaved() {
-  await refreshAll()
-  if (selectedPath.value && contentMode.value === 'content') {
-    fileContent.value = await readProjectFile(projectPath.value, selectedPath.value)
-  }
-}
-
-function unstageFile(file: GitFileSelection) {
-  selectedChangeFiles.value = selectedChangeFiles.value.filter(
-    (selectedFile) => selectedFile.relativePath !== file.relativePath
-  )
-}
-
-function commitFiles(files: GitFileSelection[]) {
-  actionError.value = ''
-  if (!commitMessage.value.trim()) {
-    actionError.value = t('commitMessage')
-    return
-  }
-  void prepareAction('git.commitFiles', { files, message: commitMessage.value })
-}
-
-function commitAll() {
-  actionError.value = ''
-  if (!commitMessage.value.trim()) {
-    actionError.value = t('commitMessage')
-    return
-  }
-  void prepareAction('git.commitAll', { message: commitMessage.value })
-}
-
-function restoreFiles(files: GitFileSelection[]) {
-  void prepareAction('git.restoreFiles', { files })
-}
-
-function ignoreFiles(files: GitFileSelection[]) {
-  void prepareAction('git.ignoreFiles', { files })
-}
-
-async function prepareAction(
-  action: WorkbenchAction,
-  payload?: { files?: GitFileSelection[]; message?: string }
-) {
-  if (!projectPath.value) return
-  error.value = ''
-  actionError.value = ''
-  dialogError.value = ''
-  try {
-    preview.value = await previewWorkbenchAction({
-      projectPath: projectPath.value,
-      action,
-      payload
-    })
-  } catch (err) {
-    error.value = formatError(err)
-  }
-}
-
-async function executePreview() {
-  if (!preview.value) return
-  busy.value = true
-  dialogError.value = ''
-  try {
-    const result = await executeWorkbenchAction(preview.value.previewToken)
-    lastOutput.value = [result.stdout, result.stderr].filter(Boolean).join('\n')
-    outputOpen.value = Boolean(lastOutput.value)
-    preview.value = null
-    await refreshAll()
-  } catch (err) {
-    dialogError.value = formatError(err)
-  } finally {
-    busy.value = false
-  }
-}
-
-async function startFirstRun() {
-  if (!projectPath.value) return
-  const confirmed = await confirm(t('confirmFirstRunBody'), {
-    title: t('confirmFirstRunTitle'),
-    kind: 'warning'
-  })
-  if (!confirmed) return
-
-  error.value = ''
-  mirrorMessage.value = ''
-  mainView.value = 'runtime'
-  stopRuntimeTaskPolling()
-
-  try {
-    runtimeTask.value = await startRuntimeFirstRun(projectPath.value)
-    runtimeTaskTimer.value = window.setInterval(() => {
-      void refreshRuntimeTask()
-    }, 10000)
-    void refreshRuntimeTask()
-  } catch (err) {
-    error.value = formatError(err)
-  }
-}
-
-async function refreshRuntimeTask() {
-  if (!runtimeTask.value) return
-
-  try {
-    runtimeTask.value = await getRuntimeTask(runtimeTask.value.taskId)
-    if (runtimeTask.value.status !== 'running') {
-      stopRuntimeTaskPolling()
-      await refreshAll()
-    }
-  } catch (err) {
-    stopRuntimeTaskPolling()
-    error.value = formatError(err)
-  }
-}
-
-function stopRuntimeTaskPolling() {
-  if (runtimeTaskTimer.value === null) return
-  window.clearInterval(runtimeTaskTimer.value)
-  runtimeTaskTimer.value = null
-}
-
-async function configureMirrors() {
-  if (!projectPath.value) return
-  const confirmed = await confirm(t('confirmMirrorsBody'), {
-    title: t('confirmMirrorsTitle'),
-    kind: 'warning'
-  })
-  if (!confirmed) return
-
-  error.value = ''
-  mirrorMessage.value = ''
-  mainView.value = 'runtime'
-
-  try {
-    const result = await configureProjectMirrors(projectPath.value)
-    mirrorMessage.value = `${t('mirrorConfigDone')}: ${result.files.join(', ')}`
-    await refreshAll()
-  } catch (err) {
-    error.value = formatError(err)
-  }
-}
-
-async function cancelFirstRun() {
-  if (!runtimeTask.value || runtimeTask.value.status !== 'running') return
-  error.value = ''
-
-  try {
-    runtimeTask.value = await cancelRuntimeTask(runtimeTask.value.taskId)
-    stopRuntimeTaskPolling()
-  } catch (err) {
-    error.value = formatError(err)
-  }
-}
-
-function changeLocale(event: Event) {
-  const value = (event.target as HTMLSelectElement).value as Locale
-  setLocale(value)
-}
-
-function formatError(err: unknown) {
-  if (typeof err === 'object' && err && 'message' in err) {
-    return String((err as { message: unknown }).message)
-  }
-  return String(err)
+function formatRuntimeError(error: unknown) {
+  if (error instanceof Error) return error.message
+  if (typeof error === 'object' && error && 'message' in error) return String((error as { message: unknown }).message)
+  return String(error)
 }
 </script>

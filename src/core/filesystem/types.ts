@@ -19,6 +19,7 @@ export interface FileContent {
   content: string
   isBinary: boolean
   size: number
+  modifiedAt?: string
 }
 
 export interface FileMutationResult {
