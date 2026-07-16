@@ -5,4 +5,8 @@ export interface ProjectOverview {
   hasComposeFile: boolean
   composeFilePath?: string
   running: boolean
+  branch?: string
+  lastCommit?: string
+  lastCommitSubject?: string
+  lastCommitAt?: string
 }

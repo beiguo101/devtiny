@@ -273,11 +273,7 @@ fn build_preview_plan(
         WorkbenchAction::GitCommitFiles => {
             require_git_repository(&project_path)?;
             let message = commit_message(payload.as_ref())?;
-            let paths = normalized_paths(&project_path, &affected_files)?;
-            steps.push(WorkStep::Command(CommandSpec::new(
-                "git",
-                git_args_with_paths(vec!["add"], &paths),
-            )));
+            let _ = normalized_paths(&project_path, &affected_files)?;
             steps.push(WorkStep::Command(CommandSpec::new(
                 "git",
                 vec!["commit".into(), "-m".into(), message],

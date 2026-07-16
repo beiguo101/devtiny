@@ -9,16 +9,6 @@
 import { computed, onBeforeUnmount, onMounted, ref, watch } from 'vue'
 import { basicSetup, EditorView } from 'codemirror'
 import { EditorState } from '@codemirror/state'
-import { python } from '@codemirror/lang-python'
-import { javascript } from '@codemirror/lang-javascript'
-import { html } from '@codemirror/lang-html'
-import { css } from '@codemirror/lang-css'
-import { json } from '@codemirror/lang-json'
-import { markdown } from '@codemirror/lang-markdown'
-import { java } from '@codemirror/lang-java'
-import { sql } from '@codemirror/lang-sql'
-import { xml } from '@codemirror/lang-xml'
-import { yaml } from '@codemirror/lang-yaml'
 
 const props = defineProps<{
   text: string
@@ -34,15 +24,15 @@ const emit = defineEmits<{
 const editorHost = ref<HTMLElement | null>(null)
 let editor: EditorView | null = null
 let syncingFromProp = false
+let mountVersion = 0
 
 const language = computed(() => detectLanguage(props.relativePath))
 const renderedDiff = computed(() => renderDiff(props.text, language.value))
 
-onMounted(() => {
-  mountEditor()
-})
+onMounted(() => { void mountEditor() })
 
 onBeforeUnmount(() => {
+  mountVersion += 1
   editor?.destroy()
   editor = null
 })
@@ -51,7 +41,7 @@ watch(
   () => [props.text, props.relativePath, props.editable] as const,
   () => {
     if (!editor || props.mode === 'diff') {
-      mountEditor()
+      void mountEditor()
       return
     }
     const current = editor.state.doc.toString()
@@ -68,17 +58,20 @@ watch(
 watch(
   () => props.mode,
   () => {
-    mountEditor()
+    void mountEditor()
   }
 )
 
-function mountEditor() {
+async function mountEditor() {
+  const version = ++mountVersion
   if (props.mode === 'diff' || !editorHost.value) {
     editor?.destroy()
     editor = null
     return
   }
 
+  const support = await languageExtension(language.value)
+  if (version !== mountVersion || !editorHost.value) return
   editor?.destroy()
   editor = new EditorView({
     parent: editorHost.value,
@@ -87,7 +80,7 @@ function mountEditor() {
       extensions: [
         basicSetup,
         devtinyEditorTheme,
-        languageExtension(language.value),
+        support,
         EditorView.editable.of(props.editable !== false),
         EditorView.lineWrapping,
         EditorView.updateListener.of((update) => {
@@ -154,28 +147,28 @@ function detectLanguage(path: string) {
   return 'plain'
 }
 
-function languageExtension(lang: string) {
+async function languageExtension(lang: string) {
   switch (lang) {
     case 'python':
-      return python()
+      return (await import('@codemirror/lang-python')).python()
     case 'javascript':
-      return javascript({ jsx: true, typescript: true })
+      return (await import('@codemirror/lang-javascript')).javascript({ jsx: true, typescript: true })
     case 'html':
-      return html()
+      return (await import('@codemirror/lang-html')).html()
     case 'xml':
-      return xml()
+      return (await import('@codemirror/lang-xml')).xml()
     case 'css':
-      return css()
+      return (await import('@codemirror/lang-css')).css()
     case 'json':
-      return json()
+      return (await import('@codemirror/lang-json')).json()
     case 'markdown':
-      return markdown()
+      return (await import('@codemirror/lang-markdown')).markdown()
     case 'java':
-      return java()
+      return (await import('@codemirror/lang-java')).java()
     case 'sql':
-      return sql()
+      return (await import('@codemirror/lang-sql')).sql()
     case 'yaml':
-      return yaml()
+      return (await import('@codemirror/lang-yaml')).yaml()
     default:
       return []
   }

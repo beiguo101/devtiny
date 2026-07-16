@@ -1,5 +1,6 @@
 use crate::core::app_error::{AppError, AppResult};
 use crate::core::path_guard::{canonical_project_path, resolve_existing_path};
+use chrono::{DateTime, Utc};
 use serde::Serialize;
 use std::fs;
 
@@ -12,6 +13,7 @@ pub struct FileContent {
     pub content: String,
     pub is_binary: bool,
     pub size: u64,
+    pub modified_at: Option<String>,
 }
 
 #[tauri::command]
@@ -42,5 +44,9 @@ pub fn read_project_file(project_path: String, relative_path: String) -> AppResu
         content,
         is_binary,
         size: metadata.len(),
+        modified_at: metadata
+            .modified()
+            .ok()
+            .map(|value| DateTime::<Utc>::from(value).to_rfc3339()),
     })
 }
